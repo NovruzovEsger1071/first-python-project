@@ -19,10 +19,15 @@ class UserResponse(UserBase):
 
     class Config:
         orm_mode = True
+#
+# class UserUpdate(BaseModel):
+#     name: Optional[str] = None
+#     age: Optional[int] = None
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     age: Optional[int] = None
+    password: Optional[str] = None  # əlavə et
 
 
 
