@@ -1,6 +1,29 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Dict
+from datetime import datetime
 
+
+class UploadedFileCreate(BaseModel):
+    filename: str
+    filepath: str
+
+class UploadedFileResponse(BaseModel):
+    id: str
+    filename: str
+    status: str
+    error_message: Optional[str]
+    uploaded_at: datetime
+
+    class Config:
+        orm_mode = True
+
+class AnalyticsSummaryResponse(BaseModel):
+    total_sales_product: Dict[str, float]
+    total_sales_region: Dict[str, float]
+    monthly_trends: Dict[str, float]
+
+    class Config:
+        orm_mode = True
 
 
 class UserBase(BaseModel):

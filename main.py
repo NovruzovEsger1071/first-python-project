@@ -10,11 +10,24 @@ from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from auth import verify_password, create_access_token, SECRET_KEY, ALGORITHM
+from fastapi import UploadFile, File, BackgroundTasks
+from pathlib import Path
+import shutil, uuid
+import pandas as pd
+from models import UploadedFile, SalesRecord, AnalyticsSummary
+from schemas import UploadedFileResponse, AnalyticsSummaryResponse
+from fastapi import Depends, HTTPException, status, FastAPI
+from fastapi.security import OAuth2PasswordBearer
+
+
 
 
 
 app = FastAPI()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/users/login")
+UPLOAD_FOLDER = Path("uploads")
+UPLOAD_FOLDER.mkdir(exist_ok=True)
+
 
 
 Base.metadata.create_all(bind=engine)
@@ -27,10 +40,6 @@ def get_db():
     finally:
         db.close()
 
-
-
-def hash_password(password: str):
-    return pwd_context.hash(password)
 
 
 
@@ -47,6 +56,191 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
+
+REQUIRED_COLUMNS = ["date", "product_name", "quantity", "price", "region"]
+
+@app.post("/files/upload", response_model=UploadedFileResponse)
+async def upload_file(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    if not file.filename.endswith((".csv", ".xlsx")):
+        raise HTTPException(status_code=400, detail="Yalnız CSV və Excel faylları qəbul edilir")
+
+    file_id = str(uuid.uuid4())
+    file_path = UPLOAD_FOLDER / f"{file_id}_{file.filename}"
+
+    with file_path.open("wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    uploaded_file = UploadedFile(
+        id=file_id,
+        filename=file.filename,
+        filepath=str(file_path),
+        status="pending",
+        user_id=current_user.id
+    )
+    db.add(uploaded_file)
+    db.commit()
+    db.refresh(uploaded_file)
+
+    background_tasks.add_task(process_file, uploaded_file.id)
+    # background_tasks.add_task(process_file, uploaded_file.id, db)
+
+    return uploaded_file
+
+
+def process_file(file_id: str):
+    db = session_local()  # yeni session açılır
+    try:
+        uploaded_file = db.query(UploadedFile).filter(UploadedFile.id == file_id).first()
+        if not uploaded_file:
+            return
+
+        uploaded_file.status = "processing"
+        db.commit()
+
+        if uploaded_file.filename.endswith(".csv"):
+            df = pd.read_csv(uploaded_file.filepath)
+        else:
+            df = pd.read_excel(uploaded_file.filepath)
+
+        missing_cols = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+        if missing_cols:
+            uploaded_file.status = "failed"
+            uploaded_file.error_message = f"Əskik sütunlar: {missing_cols}"
+            db.commit()
+            return
+
+        df = df.dropna(subset=REQUIRED_COLUMNS)
+        df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce")
+        df["price"] = pd.to_numeric(df["price"], errors="coerce")
+        df = df.dropna(subset=["quantity", "price"])
+
+        sales_records = [
+            SalesRecord(
+                uploaded_file_id=file_id,
+                date=row["date"],
+                product_name=row["product_name"],
+                quantity=row["quantity"],
+                price=row["price"],
+                region=row["region"]
+            ) for _, row in df.iterrows()
+        ]
+        db.bulk_save_objects(sales_records)
+        db.commit()
+
+        total_sales_product = df.groupby("product_name").apply(lambda x: (x.quantity * x.price).sum()).to_dict()
+        total_sales_region = df.groupby("region").apply(lambda x: (x.quantity * x.price).sum()).to_dict()
+        df["month"] = pd.to_datetime(df["date"]).dt.to_period("M")
+        monthly_trends = df.groupby("month").apply(lambda x: (x.quantity * x.price).sum()).to_dict()
+
+        analytics = AnalyticsSummary(
+            uploaded_file_id=file_id,
+            total_sales_product=total_sales_product,
+            total_sales_region=total_sales_region,
+            monthly_trends=monthly_trends
+        )
+        db.add(analytics)
+
+        uploaded_file.status = "done"
+        db.commit()
+
+    except Exception as e:
+        uploaded_file.status = "failed"
+        uploaded_file.error_message = str(e)
+        db.commit()
+        print(f"Error processing file {file_id}: {e}")  # terminalda xətanı görmək üçün
+
+    finally:
+        db.close()
+
+# def process_file(file_id: str, db: Session):
+#     uploaded_file = db.query(UploadedFile).filter(UploadedFile.id == file_id).first()
+#     if not uploaded_file:
+#         return
+#
+#     uploaded_file.status = "processing"
+#     db.commit()
+#
+#     try:
+#         if uploaded_file.filename.endswith(".csv"):
+#             df = pd.read_csv(uploaded_file.filepath)
+#         else:
+#             df = pd.read_excel(uploaded_file.filepath)
+#
+#         missing_cols = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+#         if missing_cols:
+#             uploaded_file.status = "failed"
+#             uploaded_file.error_message = f"Əskik sütunlar: {missing_cols}"
+#             db.commit()
+#             return
+#
+#         df = df.dropna(subset=REQUIRED_COLUMNS)
+#         df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce")
+#         df["price"] = pd.to_numeric(df["price"], errors="coerce")
+#         df = df.dropna(subset=["quantity", "price"])
+#
+#         sales_records = [
+#             SalesRecord(
+#                 uploaded_file_id=file_id,
+#                 date=row["date"],
+#                 product_name=row["product_name"],
+#                 quantity=row["quantity"],
+#                 price=row["price"],
+#                 region=row["region"]
+#             ) for _, row in df.iterrows()
+#         ]
+#         db.bulk_save_objects(sales_records)
+#         db.commit()
+#
+#         total_sales_product = df.groupby("product_name").apply(lambda x: (x.quantity * x.price).sum()).to_dict()
+#         total_sales_region = df.groupby("region").apply(lambda x: (x.quantity * x.price).sum()).to_dict()
+#         df["month"] = pd.to_datetime(df["date"]).dt.to_period("M")
+#         monthly_trends = df.groupby("month").apply(lambda x: (x.quantity * x.price).sum()).to_dict()
+#
+#         analytics = AnalyticsSummary(
+#             uploaded_file_id=file_id,
+#             total_sales_product=total_sales_product,
+#             total_sales_region=total_sales_region,
+#             monthly_trends=monthly_trends
+#         )
+#         db.add(analytics)
+#
+#         uploaded_file.status = "done"
+#         db.commit()
+#
+#     except Exception as e:
+#         uploaded_file.status = "failed"
+#         uploaded_file.error_message = str(e)
+#         db.commit()
+
+
+
+
+@app.get("/files/{file_id}/status", response_model=UploadedFileResponse)
+def file_status(file_id: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    uploaded_file = db.query(UploadedFile).filter(
+        UploadedFile.id == file_id, UploadedFile.user_id == current_user.id
+    ).first()
+    if not uploaded_file:
+        raise HTTPException(status_code=404, detail="Fayl tapılmadı")
+    return uploaded_file
+
+
+
+
+
+
+def hash_password(password: str):
+    return pwd_context.hash(password)
+
+
+
+
 
 
 @app.get("/users/me", response_model=UserResponse)
