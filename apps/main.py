@@ -222,6 +222,15 @@ async def read_post(post_id: int, db: Session = Depends(get_db)) -> PostResponse
     return post
 
 
+
+from apps.api.routers import analytics
+
+app.include_router(analytics.router)
+
+
+
+
+
 # Daha əvvəlki bütün update, delete və read-all endpoints eyni formada qalır
 
 
