@@ -91,6 +91,9 @@ async def upload_file(
     return uploaded_file
 
 
+
+
+
 def process_file(file_id: str):
     db = session_local()
     try:
@@ -101,11 +104,15 @@ def process_file(file_id: str):
         uploaded_file.status = "processing"
         db.commit()
 
+        print('ssssssssss')
+
+        # 📂 Faylı oxuma
         if uploaded_file.filename.endswith(".csv"):
             df = pd.read_csv(uploaded_file.filepath)
         else:
             df = pd.read_excel(uploaded_file.filepath)
 
+        # ✅ Əskik sütun yoxla
         missing_cols = [col for col in REQUIRED_COLUMNS if col not in df.columns]
         if missing_cols:
             uploaded_file.status = "failed"
@@ -113,11 +120,13 @@ def process_file(file_id: str):
             db.commit()
             return
 
+        # ✅ Datanı təmizlə
         df = df.dropna(subset=REQUIRED_COLUMNS)
         df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce")
         df["price"] = pd.to_numeric(df["price"], errors="coerce")
         df = df.dropna(subset=["quantity", "price"])
 
+        # 📥 SalesRecord-ları DB-yə at
         sales_records = [
             SalesRecord(
                 uploaded_file_id=file_id,
@@ -131,11 +140,23 @@ def process_file(file_id: str):
         db.bulk_save_objects(sales_records)
         db.commit()
 
-        total_sales_product = df.groupby("product_name").apply(lambda x: (x.quantity * x.price).sum()).to_dict()
-        total_sales_region = df.groupby("region").apply(lambda x: (x.quantity * x.price).sum()).to_dict()
-        df["month"] = pd.to_datetime(df["date"]).dt.to_period("M")
-        monthly_trends = df.groupby("month").apply(lambda x: (x.quantity * x.price).sum()).to_dict()
+        # 📊 Hesablamalar
+        total_sales_product = df.groupby("product_name").apply(
+            lambda x: (x.quantity * x.price).sum()
+        ).to_dict()
 
+        total_sales_region = df.groupby("region").apply(
+            lambda x: (x.quantity * x.price).sum()
+        ).to_dict()
+
+        # ✅ Problemli hissə: Period -> str
+        df["month"] = pd.to_datetime(df["date"]).dt.to_period("M")
+        monthly_trends = df.groupby("month").apply(
+            lambda x: (x.quantity * x.price).sum()
+        ).to_dict()
+        monthly_trends = {str(k): v for k, v in monthly_trends.items()}  # <<< Fix
+
+        # 📌 Nəticəni DB-yə yaz
         analytics = AnalyticsSummary(
             uploaded_file_id=file_id,
             total_sales_product=total_sales_product,
@@ -153,6 +174,71 @@ def process_file(file_id: str):
         print(f"Error processing file {file_id}: {e}")
     finally:
         db.close()
+
+# def process_file(file_id: str):
+#     db = session_local()
+#     try:
+#         uploaded_file = db.query(UploadedFile).filter(UploadedFile.id == file_id).first()
+#         if not uploaded_file:
+#             return
+#
+#         uploaded_file.status = "processing"
+#         db.commit()
+#
+#         print('ssssssssss')
+#
+#         if uploaded_file.filename.endswith(".csv"):
+#             df = pd.read_csv(uploaded_file.filepath)
+#         else:
+#             df = pd.read_excel(uploaded_file.filepath)
+#
+#         missing_cols = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+#         if missing_cols:
+#             uploaded_file.status = "failed"
+#             uploaded_file.error_message = f"Əskik sütunlar: {missing_cols}"
+#             db.commit()
+#             return
+#
+#         df = df.dropna(subset=REQUIRED_COLUMNS)
+#         df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce")
+#         df["price"] = pd.to_numeric(df["price"], errors="coerce")
+#         df = df.dropna(subset=["quantity", "price"])
+#
+#         sales_records = [
+#             SalesRecord(
+#                 uploaded_file_id=file_id,
+#                 date=row["date"],
+#                 product_name=row["product_name"],
+#                 quantity=row["quantity"],
+#                 price=row["price"],
+#                 region=row["region"]
+#             ) for _, row in df.iterrows()
+#         ]
+#         db.bulk_save_objects(sales_records)
+#         db.commit()
+#
+#         total_sales_product = df.groupby("product_name").apply(lambda x: (x.quantity * x.price).sum()).to_dict()
+#         total_sales_region = df.groupby("region").apply(lambda x: (x.quantity * x.price).sum()).to_dict()
+#         df["month"] = pd.to_datetime(df["date"]).dt.to_period("M")
+#         monthly_trends = df.groupby("month").apply(lambda x: (x.quantity * x.price).sum()).to_dict()
+#
+#         analytics = AnalyticsSummary(
+#             uploaded_file_id=file_id,
+#             total_sales_product=total_sales_product,
+#             total_sales_region=total_sales_region,
+#             monthly_trends=monthly_trends
+#         )
+#         db.add(analytics)
+#         uploaded_file.status = "done"
+#         db.commit() #?
+#
+#     except Exception as e:
+#         uploaded_file.status = "failed"
+#         uploaded_file.error_message = str(e)
+#         db.commit()
+#         print(f"Error processing file {file_id}: {e}")
+#     finally:
+#         db.close()
 
 
 @app.get("/files/{file_id}/status", response_model=UploadedFileResponse)
