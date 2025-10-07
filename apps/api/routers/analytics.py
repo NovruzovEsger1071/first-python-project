@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from apps.core.database import session_local
+from apps.core.database import Session
+from apps.core.database import SessionLocal, get_session
+
 from apps.models.salesRecord import SalesRecord
 from apps.models.analyticsSummary import AnalyticsSummary
 from apps.api.schemas.schemas import AnalyticsSummaryResponse
@@ -16,7 +18,7 @@ router = APIRouter(prefix="/analytics", tags=["Analytics"])
 r = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
 
 def get_db():
-    db = session_local()
+    db = SessionLocal()
     try:
         yield db
     finally:
@@ -163,7 +165,7 @@ def analytics_monthly(file_id: str = Query(...), db: Session = Depends(get_db)):
 
 # from fastapi import APIRouter, Depends, HTTPException, Query
 # from sqlalchemy.orm import Session
-# from apps.core.database import session_local
+# from apps.core.database import Session_local
 # from apps.models.salesRecord import SalesRecord
 # from apps.models.analyticsSummary import AnalyticsSummary
 # from typing import Dict, Optional
@@ -181,7 +183,7 @@ def analytics_monthly(file_id: str = Query(...), db: Session = Depends(get_db)):
 # r = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
 #
 # def get_db():
-#     db = session_local()
+#     db = Session_local()
 #     try:
 #         yield db
 #     finally:
@@ -315,14 +317,14 @@ def analytics_monthly(file_id: str = Query(...), db: Session = Depends(get_db)):
 #
 # # from fastapi import APIRouter, Depends, HTTPException
 # # from sqlalchemy.orm import Session
-# # from apps.core.database import session_local
+# # from apps.core.database import Session_local
 # # from apps.models.analyticsSummary import AnalyticsSummary
 # # from typing import Dict
 # #
 # # router = APIRouter()
 # #
 # # def get_db():
-# #     db = session_local()
+# #     db = Session_local()
 # #     try:
 # #         yield db
 # #     finally:
@@ -384,7 +386,7 @@ def analytics_monthly(file_id: str = Query(...), db: Session = Depends(get_db)):
 #
 # # from fastapi import APIRouter, Depends, HTTPException
 # # from sqlalchemy.orm import Session
-# # from database import session_local
+# # from database import Session_local
 # # from models import AnalyticsSummary
 # # from typing import Dict
 # # import redis
@@ -397,7 +399,7 @@ def analytics_monthly(file_id: str = Query(...), db: Session = Depends(get_db)):
 # #
 # #
 # # def get_db():
-# #     db = session_local()
+# #     db = Session_local()
 # #     try:
 # #         yield db
 # #     finally:
@@ -472,14 +474,14 @@ def analytics_monthly(file_id: str = Query(...), db: Session = Depends(get_db)):
 # #
 # # # from fastapi import APIRouter, Depends, HTTPException
 # # # from sqlalchemy.orm import Session
-# # # from database import session_local
+# # # from database import Session_local
 # # # from models import AnalyticsSummary
 # # # from typing import Dict
 # # #
 # # # router = APIRouter()
 # # #
 # # # def get_db():
-# # #     db = session_local()
+# # #     db = Session_local()
 # # #     try:
 # # #         yield db
 # # #     finally:
